@@ -300,7 +300,7 @@ graphiti = Graphiti(
 # Now you can use Graphiti with Google Gemini for all components
 ```
 
-The Gemini reranker uses the `gemini-2.5-flash-lite` model by default, which is optimized for
+The Gemini reranker uses the `gemini-2.5-flash` model by default, which is optimized for
 cost-effective and low-latency classification tasks. It leverages Gemini's log probabilities feature to rank passage relevance.
 
 ## Documentation

@@ -116,7 +116,7 @@ class RerankerFactory:
 
         llm_config = GraphitiLLMConfig(
             api_key=api_key,
-            model='gemini-2.5-flash-lite',  # Optimized for reranking
+            model='gemini-2.5-flash',  # Optimized for reranking
             temperature=0.0,  # Deterministic for reranking
         )
         return GeminiRerankerClient(config=llm_config)
