@@ -100,7 +100,7 @@ The MCP server comes with sensible defaults:
 - **Database**: FalkorDB (combined in single container with MCP server)
 - **LLM**: Google Gemini with model gemini-2.0-flash
 - **Embedder**: Google Gemini text-embedding-004
-- **Reranker**: Google Gemini gemini-2.5-flash
+- **Reranker**: Google Gemini gemini-flash-latest
 
 ### Database Configuration
 

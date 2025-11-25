@@ -292,7 +292,7 @@ graphiti = Graphiti(
     cross_encoder=GeminiRerankerClient(
         config=LLMConfig(
             api_key=api_key,
-            model="gemini-2.5-flash-lite"
+            model="gemini-flash-latest"
         )
     )
 )
@@ -300,7 +300,7 @@ graphiti = Graphiti(
 # Now you can use Graphiti with Google Gemini for all components
 ```
 
-The Gemini reranker uses the `gemini-2.5-flash` model by default, which is optimized for
+The Gemini reranker uses the `gemini-flash-latest` model by default, which is optimized for
 cost-effective and low-latency classification tasks. It leverages Gemini's log probabilities feature to rank passage relevance.
 
 ## Documentation
