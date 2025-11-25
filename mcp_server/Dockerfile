@@ -25,7 +25,7 @@ ENV PATH="/root/.local/bin:${PATH}"
 # Configure uv for optimal Docker usage
 ENV UV_COMPILE_BYTECODE=1 \
     UV_LINK_MODE=copy \
-    UV_PYTHON_DOWNLOADS=never \
+    UV_PYTHON_DOWNLOADS=automatic \
     MCP_SERVER_HOST="0.0.0.0" \
     PYTHONUNBUFFERED=1
 
