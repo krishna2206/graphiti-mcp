@@ -262,6 +262,9 @@ The Graphiti MCP server can be deployed using Docker with your choice of databas
 
 A pre-built Graphiti MCP container is available at: `zepai/knowledge-graph-mcp`
 
+> [!TIP]
+> For deploying on Dokploy (an open-source hosting platform), see the [Dokploy Deployment Guide](./DOKPLOY_DEPLOYMENT.md) for detailed instructions.
+
 #### Environment Configuration
 
 Before running Docker Compose, configure your API keys using a `.env` file (recommended):

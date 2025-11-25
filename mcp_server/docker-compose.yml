@@ -23,6 +23,10 @@ services:
       - SEMAPHORE_LIMIT=${SEMAPHORE_LIMIT:-10}
       - CONFIG_PATH=/app/mcp/config/config.yaml
       - PATH=/root/.local/bin:${PATH}
+      # Google Gemini API Configuration (REQUIRED)
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY}
+      - GOOGLE_PROJECT_ID=${GOOGLE_PROJECT_ID:-}
+      - GOOGLE_LOCATION=${GOOGLE_LOCATION:-us-central1}
     volumes:
       - falkordb_data:/var/lib/falkordb/data
       - mcp_logs:/var/log/graphiti
