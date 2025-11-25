@@ -8,6 +8,11 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
+# Retry configuration for rate limiting errors
+MAX_RETRIES = 3
+INITIAL_RETRY_DELAY = 2.0  # seconds
+MAX_RETRY_DELAY = 60.0  # seconds
+
 
 class QueueService:
     """Service for managing sequential episode processing queues by group_id."""
@@ -126,27 +131,57 @@ class QueueService:
             raise RuntimeError('Queue service not initialized. Call initialize() first.')
 
         async def process_episode():
-            """Process the episode using the graphiti client."""
-            try:
-                logger.info(f'Processing episode {uuid} for group {group_id}')
+            """Process the episode using the graphiti client with retry logic."""
+            retries = 0
+            retry_delay = INITIAL_RETRY_DELAY
 
-                # Process the episode using the graphiti client
-                await self._graphiti_client.add_episode(
-                    name=name,
-                    episode_body=content,
-                    source_description=source_description,
-                    source=episode_type,
-                    group_id=group_id,
-                    reference_time=datetime.now(timezone.utc),
-                    entity_types=entity_types,
-                    uuid=uuid,
-                )
+            while retries <= MAX_RETRIES:
+                try:
+                    logger.info(
+                        f'Processing episode {uuid} for group {group_id}'
+                        + (f' (retry {retries}/{MAX_RETRIES})' if retries > 0 else '')
+                    )
 
-                logger.info(f'Successfully processed episode {uuid} for group {group_id}')
+                    # Process the episode using the graphiti client
+                    await self._graphiti_client.add_episode(
+                        name=name,
+                        episode_body=content,
+                        source_description=source_description,
+                        source=episode_type,
+                        group_id=group_id,
+                        reference_time=datetime.now(timezone.utc),
+                        entity_types=entity_types,
+                        uuid=uuid,
+                    )
 
-            except Exception as e:
-                logger.error(f'Failed to process episode {uuid} for group {group_id}: {str(e)}')
-                raise
+                    logger.info(f'Successfully processed episode {uuid} for group {group_id}')
+                    return  # Success - exit the retry loop
+
+                except Exception as e:
+                    error_msg = str(e)
+
+                    # Check if it's a rate limit error
+                    is_rate_limit = (
+                        'rate limit' in error_msg.lower()
+                        or '429' in error_msg
+                        or 'too many requests' in error_msg.lower()
+                    )
+
+                    if is_rate_limit and retries < MAX_RETRIES:
+                        retries += 1
+                        logger.warning(
+                            f'Rate limit hit for episode {uuid}. '
+                            f'Retrying in {retry_delay:.1f}s (attempt {retries}/{MAX_RETRIES})'
+                        )
+                        await asyncio.sleep(retry_delay)
+                        # Exponential backoff with jitter
+                        retry_delay = min(retry_delay * 2, MAX_RETRY_DELAY)
+                    else:
+                        # Not a rate limit error or max retries reached
+                        logger.error(
+                            f'Failed to process episode {uuid} for group {group_id}: {error_msg}'
+                        )
+                        raise
 
         # Use the existing add_episode_task method to queue the processing
         return await self.add_episode_task(group_id, process_episode)

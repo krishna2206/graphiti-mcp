@@ -19,7 +19,10 @@ services:
       - FALKORDB_URI=redis://localhost:6379
       - FALKORDB_DATABASE=${FALKORDB_DATABASE:-default_db}
       - GRAPHITI_GROUP_ID=${GRAPHITI_GROUP_ID:-main}
-      - SEMAPHORE_LIMIT=${SEMAPHORE_LIMIT:-10}
+      # Concurrency limit: Lower value = fewer rate limit errors but slower processing
+      # Free tier: Use 1-3 for long texts, 5 for short texts
+      # Paid tier: Use 5-15 depending on rate limits
+      - SEMAPHORE_LIMIT=${SEMAPHORE_LIMIT:-3}
       - CONFIG_PATH=/app/mcp/config/config.yaml
       - PATH=/root/.local/bin:${PATH}
       # Google Gemini API Configuration (REQUIRED)

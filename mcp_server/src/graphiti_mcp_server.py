@@ -54,25 +54,35 @@ else:
 #
 # This controls how many episodes can be processed simultaneously. Each episode
 # processing involves multiple LLM calls (entity extraction, deduplication, etc.),
-# so the actual number of concurrent LLM requests will be higher.
+# so the actual number of concurrent LLM requests will be MUCH HIGHER.
+#
+# IMPORTANT: For long texts (>5,000 words), each episode can generate 30-100+ API calls!
+# With SEMAPHORE_LIMIT=10, this means 300-1000 concurrent requests → instant rate limiting.
 #
 # TUNING GUIDELINES:
 #
 # LLM Provider Rate Limits (requests per minute):
-# - Gemini (default):     60 RPM   -> SEMAPHORE_LIMIT=5-10
-# - Gemini (high tier): 1,500 RPM   -> SEMAPHORE_LIMIT=15-30
+# - Gemini Free (15 RPM):
+#     Long texts (>5k words): SEMAPHORE_LIMIT=1-2
+#     Short texts (<1k words): SEMAPHORE_LIMIT=3-5
+# - Gemini Paid (60+ RPM):   SEMAPHORE_LIMIT=5-10
+# - Gemini High Tier (1000+ RPM): SEMAPHORE_LIMIT=15-30
 #
 # SYMPTOMS:
-# - Too high: 429 rate limit errors, increased costs from parallel processing
+# - Too high: 429 rate limit errors, processing failures
 # - Too low: Slow throughput, underutilized API quota
 #
 # MONITORING:
-# - Watch logs for rate limit errors (429)
+# - Watch logs for "429 Too Many Requests" errors
 # - Monitor episode processing times
 # - Check LLM provider dashboard for actual request rates
 #
-# DEFAULT: 10 (suitable for Gemini default tier)
-SEMAPHORE_LIMIT = int(os.getenv('SEMAPHORE_LIMIT', 10))
+# NOTE: The service now includes automatic retry with exponential backoff
+# for rate limit errors (max 3 retries).
+#
+# DEFAULT: 3 (conservative for free tier, suitable for most use cases)
+# See docs/RATE_LIMITING.md for detailed guidance
+SEMAPHORE_LIMIT = int(os.getenv('SEMAPHORE_LIMIT', 3))
 
 
 # Configure structured logging with timestamps

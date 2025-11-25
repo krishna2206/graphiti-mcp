@@ -230,14 +230,35 @@ uv run graphiti_mcp_server.py --config config/config-docker-falkordb.yaml
 
 Graphiti's ingestion pipelines are designed for high concurrency, controlled by the `SEMAPHORE_LIMIT` environment variable. This setting determines how many episodes can be processed simultaneously. Since each episode involves multiple LLM calls (entity extraction, deduplication, summarization), the actual number of concurrent LLM requests will be several times higher.
 
-**Default:** `SEMAPHORE_LIMIT=10` (suitable for Google Gemini free tier)
+**Default:** `SEMAPHORE_LIMIT=10` (may cause rate limiting with long texts or free tier)
+
+#### Quick Fix for Rate Limiting
+
+If you see `429 Too Many Requests` errors:
+
+```bash
+# Edit .env file
+SEMAPHORE_LIMIT=1  # For long texts on free tier
+# or
+SEMAPHORE_LIMIT=3  # For short texts on free tier
+
+# Then restart
+docker compose down && docker compose up
+```
 
 #### Tuning Guidelines
 
 **Google Gemini:**
-- Free tier: 15 RPM → `SEMAPHORE_LIMIT=2-5`
-- Paid tier: 1,000+ RPM → `SEMAPHORE_LIMIT=10-30`
+- Free tier (15 RPM):
+  - Long texts (>5,000 words): `SEMAPHORE_LIMIT=1-2`
+  - Short texts (<1,000 words): `SEMAPHORE_LIMIT=3-5`
+- Paid tier (60+ RPM): `SEMAPHORE_LIMIT=5-10`
+- High volume (1,000+ RPM): `SEMAPHORE_LIMIT=15-30`
 - Check your quota at [Google AI Studio](https://aistudio.google.com/)
+
+#### Automatic Retry
+
+The server now automatically retries failed episodes with exponential backoff (2s → 4s → 8s, max 3 retries) when rate limits are hit.
 
 #### Symptoms
 
@@ -248,6 +269,9 @@ Graphiti's ingestion pipelines are designed for high concurrency, controlled by 
 
 - Watch logs for `429` rate limit errors
 - Monitor episode processing times in server logs
+- Check your LLM provider's dashboard for actual request rates
+
+📖 **For detailed troubleshooting and best practices, see [Rate Limiting Guide](docs/RATE_LIMITING.md)**
 - Check your LLM provider's dashboard for actual request rates
 - Track token usage and costs
 

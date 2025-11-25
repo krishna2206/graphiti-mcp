@@ -102,7 +102,7 @@ class LLMConfig(BaseModel):
     """LLM configuration."""
 
     provider: str = Field(default='gemini', description='LLM provider')
-    model: str = Field(default='gemini-2.0-flash-exp', description='Model name')
+    model: str = Field(default='gemini-flash-latest', description='Model name')
     temperature: float | None = Field(
         default=0.7, description='Temperature'
     )

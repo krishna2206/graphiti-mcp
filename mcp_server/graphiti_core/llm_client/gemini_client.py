@@ -45,7 +45,7 @@ else:
 logger = logging.getLogger(__name__)
 
 DEFAULT_MODEL = 'gemini-flash-latest'
-DEFAULT_SMALL_MODEL = 'gemini-flash-latest'
+DEFAULT_SMALL_MODEL = 'gemini-flash-lite-latest'
 
 # Maximum output tokens for different Gemini models
 GEMINI_MODEL_MAX_TOKENS = {
