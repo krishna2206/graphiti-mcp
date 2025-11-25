@@ -1,8 +1,8 @@
 from .client import EmbedderClient
-from .openai import OpenAIEmbedder, OpenAIEmbedderConfig
+from .gemini import GeminiEmbedder, GeminiEmbedderConfig
 
 __all__ = [
     'EmbedderClient',
-    'OpenAIEmbedder',
-    'OpenAIEmbedderConfig',
+    'GeminiEmbedder',
+    'GeminiEmbedderConfig',
 ]

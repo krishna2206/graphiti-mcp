@@ -15,6 +15,6 @@ limitations under the License.
 """
 
 from .client import CrossEncoderClient
-from .openai_reranker_client import OpenAIRerankerClient
+from .gemini_reranker_client import GeminiRerankerClient
 
-__all__ = ['CrossEncoderClient', 'OpenAIRerankerClient']
+__all__ = ['CrossEncoderClient', 'GeminiRerankerClient']

@@ -23,10 +23,10 @@ from pydantic import BaseModel
 from typing_extensions import LiteralString
 
 from graphiti_core.cross_encoder.client import CrossEncoderClient
-from graphiti_core.cross_encoder.openai_reranker_client import OpenAIRerankerClient
+from graphiti_core.cross_encoder.gemini_reranker_client import GeminiRerankerClient
 from graphiti_core.decorators import handle_multiple_group_ids
 from graphiti_core.driver.driver import GraphDriver
-from graphiti_core.driver.neo4j_driver import Neo4jDriver
+from graphiti_core.driver.falkordb_driver import FalkorDriver
 from graphiti_core.edges import (
     CommunityEdge,
     Edge,
@@ -34,7 +34,8 @@ from graphiti_core.edges import (
     EpisodicEdge,
     create_entity_edge_embeddings,
 )
-from graphiti_core.embedder import EmbedderClient, OpenAIEmbedder
+from graphiti_core.embedder import EmbedderClient
+from graphiti_core.embedder.gemini import GeminiEmbedder
 from graphiti_core.graphiti_types import GraphitiClients
 from graphiti_core.helpers import (
     get_default_group_id,
@@ -42,7 +43,8 @@ from graphiti_core.helpers import (
     validate_excluded_entity_types,
     validate_group_id,
 )
-from graphiti_core.llm_client import LLMClient, OpenAIClient
+from graphiti_core.llm_client import LLMClient
+from graphiti_core.llm_client.gemini_client import GeminiClient
 from graphiti_core.nodes import (
     CommunityNode,
     EntityNode,
@@ -149,25 +151,25 @@ class Graphiti:
         Parameters
         ----------
         uri : str
-            The URI of the Neo4j database.
+            The URI of the FalkorDB database.
         user : str
-            The username for authenticating with the Neo4j database.
+            The username for authenticating with the FalkorDB database (optional).
         password : str
-            The password for authenticating with the Neo4j database.
+            The password for authenticating with the FalkorDB database (optional).
         llm_client : LLMClient | None, optional
             An instance of LLMClient for natural language processing tasks.
-            If not provided, a default OpenAIClient will be initialized.
+            If not provided, a default GeminiClient will be initialized.
         embedder : EmbedderClient | None, optional
             An instance of EmbedderClient for embedding tasks.
-            If not provided, a default OpenAIEmbedder will be initialized.
+            If not provided, a default GeminiEmbedder will be initialized.
         cross_encoder : CrossEncoderClient | None, optional
             An instance of CrossEncoderClient for reranking tasks.
-            If not provided, a default OpenAIRerankerClient will be initialized.
+            If not provided, a default GeminiRerankerClient will be initialized.
         store_raw_episode_content : bool, optional
             Whether to store the raw content of episodes. Defaults to True.
         graph_driver : GraphDriver | None, optional
             An instance of GraphDriver for database operations.
-            If not provided, a default Neo4jDriver will be initialized.
+            If not provided, a default FalkorDriver will be initialized.
         max_coroutines : int | None, optional
             The maximum number of concurrent operations allowed. Overrides SEMAPHORE_LIMIT set in the environment.
             If not set, the Graphiti default is used.
@@ -182,17 +184,17 @@ class Graphiti:
 
         Notes
         -----
-        This method establishes a connection to a graph database (Neo4j by default) using the provided
+        This method establishes a connection to a graph database (FalkorDB by default) using the provided
         credentials. It also sets up the LLM client, either using the provided client
-        or by creating a default OpenAIClient.
+        or by creating a default GeminiClient.
 
         The default database name is defined during the driver’s construction. If a different database name
         is required, it should be specified in the URI or set separately after
         initialization.
 
         The OpenAI API key is expected to be set in the environment variables.
-        Make sure to set the OPENAI_API_KEY environment variable before initializing
-        Graphiti if you're using the default OpenAIClient.
+        Make sure to set the GOOGLE_API_KEY environment variable before initializing
+        Graphiti if you're using the default GeminiClient.
         """
 
         if graph_driver:
@@ -200,22 +202,26 @@ class Graphiti:
         else:
             if uri is None:
                 raise ValueError('uri must be provided when graph_driver is None')
-            self.driver = Neo4jDriver(uri, user, password)
+            self.driver = FalkorDriver(
+                uri=uri,
+                username=user,
+                password=password,
+            )
 
         self.store_raw_episode_content = store_raw_episode_content
         self.max_coroutines = max_coroutines
         if llm_client:
             self.llm_client = llm_client
         else:
-            self.llm_client = OpenAIClient()
+            self.llm_client = GeminiClient()
         if embedder:
             self.embedder = embedder
         else:
-            self.embedder = OpenAIEmbedder()
+            self.embedder = GeminiEmbedder()
         if cross_encoder:
             self.cross_encoder = cross_encoder
         else:
-            self.cross_encoder = OpenAIRerankerClient()
+            self.cross_encoder = GeminiRerankerClient()
 
         # Initialize tracer
         self.tracer = create_tracer(tracer, trace_span_prefix)
@@ -262,35 +268,20 @@ class Graphiti:
 
         class_name = client.__class__.__name__.lower()
 
-        # LLM providers
-        if 'openai' in class_name:
-            return 'openai'
-        elif 'azure' in class_name:
-            return 'azure'
-        elif 'anthropic' in class_name:
-            return 'anthropic'
-        elif 'crossencoder' in class_name:
-            return 'crossencoder'
-        elif 'gemini' in class_name:
+        # LLM and Embedder provider
+        if 'gemini' in class_name:
             return 'gemini'
-        elif 'groq' in class_name:
-            return 'groq'
-        # Database providers
-        elif 'neo4j' in class_name:
-            return 'neo4j'
+        # Database provider
         elif 'falkor' in class_name:
             return 'falkordb'
-        # Embedder providers
-        elif 'voyage' in class_name:
-            return 'voyage'
         else:
             return 'unknown'
 
     async def close(self):
         """
-        Close the connection to the Neo4j database.
+        Close the connection to the FalkorDB database.
 
-        This method safely closes the driver connection to the Neo4j database.
+        This method safely closes the driver connection to the FalkorDB database.
         It should be called when the Graphiti instance is no longer needed or
         when the application is shutting down.
 
@@ -320,9 +311,9 @@ class Graphiti:
 
     async def build_indices_and_constraints(self, delete_existing: bool = False):
         """
-        Build indices and constraints in the Neo4j database.
+        Build indices and constraints in the FalkorDB database.
 
-        This method sets up the necessary indices and constraints in the Neo4j database
+        This method sets up the necessary indices and constraints in the FalkorDB database
         to optimize query performance and ensure data integrity for the knowledge graph.
 
         Parameters

@@ -15,6 +15,7 @@ except ImportError:
     HAS_FALKOR = False
 
 # Import Gemini clients
+from graphiti_core.cross_encoder.gemini_reranker_client import GeminiRerankerClient
 from graphiti_core.embedder import EmbedderClient
 from graphiti_core.embedder.gemini import GeminiEmbedder
 from graphiti_core.llm_client import LLMClient
@@ -95,6 +96,30 @@ class EmbedderFactory:
             embedding_dim=config.dimensions or 768,
         )
         return GeminiEmbedder(config=gemini_config)
+
+
+class RerankerFactory:
+    """Factory for creating Reranker (cross-encoder) clients based on configuration."""
+
+    @staticmethod
+    def create(config: LLMConfig) -> GeminiRerankerClient:
+        """Create a Gemini Reranker client."""
+        import logging
+
+        logger = logging.getLogger(__name__)
+
+        if not config.providers.gemini:
+            raise ValueError('Gemini provider configuration not found')
+
+        api_key = config.providers.gemini.api_key
+        _validate_api_key('Gemini Reranker', api_key, logger)
+
+        llm_config = GraphitiLLMConfig(
+            api_key=api_key,
+            model='gemini-2.5-flash-lite',  # Optimized for reranking
+            temperature=0.0,  # Deterministic for reranking
+        )
+        return GeminiRerankerClient(config=llm_config)
 
 
 class DatabaseDriverFactory:
