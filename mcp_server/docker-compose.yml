@@ -1,6 +1,6 @@
 services:
   graphiti-falkordb:
-    image: zepai/knowledge-graph-mcp:latest
+    # image: zepai/knowledge-graph-mcp:latest
     build:
       context: .
       dockerfile: Dockerfile
