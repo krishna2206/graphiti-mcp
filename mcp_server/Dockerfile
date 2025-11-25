@@ -32,24 +32,12 @@ ENV UV_COMPILE_BYTECODE=1 \
 # Set up MCP server directory
 WORKDIR /app/mcp
 
-# Copy graphiti-core local source code
-COPY graphiti_core /app/graphiti_core
-
-# Copy project files for dependency installation
-COPY mcp_server/pyproject.toml ./
+# Copy MCP server code including graphiti_core
+COPY mcp_server/ ./
 
 # Install Python dependencies (exclude dev dependency group)
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --no-group dev
-
-# Copy MCP server application code
-COPY mcp_server/main.py ./
-COPY mcp_server/src/ ./src/
-COPY mcp_server/config/ ./config/
-
-# Copy FalkorDB combined config (uses localhost since both services in same container)
-# Copy configuration
-COPY mcp_server/config/config.yaml /app/mcp/config/config.yaml
 
 # Create log and data directories
 RUN mkdir -p /var/log/graphiti /var/lib/falkordb/data
