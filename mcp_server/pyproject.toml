@@ -1,0 +1,57 @@
+[project]
+name = "mcp-server"
+version = "1.0.1"
+description = "Graphiti MCP Server"
+readme = "README.md"
+requires-python = ">=3.10,<4"
+dependencies = [
+    "mcp>=1.9.4",
+    "graphiti-core[falkordb]>=0.23.1",
+    "pydantic-settings>=2.0.0",
+    "pyyaml>=6.0",
+    "typing-extensions>=4.0.0",
+    "google-genai>=1.8.0",
+]
+
+[tool.pyright]
+include = ["src"]
+pythonVersion = "3.10"
+typeCheckingMode = "basic"
+
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint]
+select = [
+    # pycodestyle
+    "E",
+    # Pyflakes
+    "F",
+    # pyupgrade
+    "UP",
+    # flake8-bugbear
+    "B",
+    # flake8-simplify
+    "SIM",
+    # isort
+    "I",
+]
+ignore = ["E501"]
+
+[tool.ruff.lint.flake8-tidy-imports.banned-api]
+# Required by Pydantic on Python < 3.12
+"typing.TypedDict".msg = "Use typing_extensions.TypedDict instead."
+
+[tool.ruff.format]
+quote-style = "single"
+indent-style = "space"
+docstring-code-format = true
+
+[tool.uv.sources]
+graphiti-core = { path = "../", editable = true }
+
+[dependency-groups]
+dev = [
+    "pyright>=1.1.404",
+    "ruff>=0.7.1",
+]
