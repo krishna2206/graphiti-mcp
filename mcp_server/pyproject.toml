@@ -48,7 +48,7 @@ indent-style = "space"
 docstring-code-format = true
 
 [tool.uv.sources]
-graphiti-core = { path = "../", editable = true }
+graphiti-core = { path = "../graphiti_core", editable = true }
 
 [dependency-groups]
 dev = [

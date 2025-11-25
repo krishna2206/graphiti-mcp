@@ -36,10 +36,7 @@ WORKDIR /app/mcp
 COPY graphiti_core /app/graphiti_core
 
 # Copy project files for dependency installation
-COPY mcp_server/pyproject.toml mcp_server/uv.lock ./
-
-# Keep the local path override for graphiti-core to use the local version
-# This ensures we use the up-to-date graphiti-core from the repository
+COPY mcp_server/pyproject.toml ./
 
 # Install Python dependencies (exclude dev dependency group)
 RUN --mount=type=cache,target=/root/.cache/uv \
