@@ -33,7 +33,7 @@ ENV UV_COMPILE_BYTECODE=1 \
 WORKDIR /app/mcp
 
 # Copy MCP server code including graphiti_core
-COPY mcp_server/ ./
+COPY . ./
 
 # Install Python dependencies (exclude dev dependency group)
 RUN --mount=type=cache,target=/root/.cache/uv \
