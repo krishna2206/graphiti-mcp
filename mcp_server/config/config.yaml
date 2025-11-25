@@ -6,7 +6,7 @@
 # See README.md "Concurrency and LLM Provider 429 Rate Limit Errors" section for tuning guidance
 
 server:
-  transport: "sse"  # Options: stdio, sse (deprecated), http
+  transport: "http"  # Options: stdio, sse (deprecated), http
   host: "0.0.0.0"
   port: 8000
   
