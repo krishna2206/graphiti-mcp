@@ -32,28 +32,18 @@ ENV UV_COMPILE_BYTECODE=1 \
 # Set up MCP server directory
 WORKDIR /app/mcp
 
-# Accept graphiti-core version as build argument
-ARG GRAPHITI_CORE_VERSION=0.23.1
+# Copy graphiti-core local source code (from the parent directory context)
+COPY ../graphiti_core /app/graphiti_core
 
 # Copy project files for dependency installation
 COPY pyproject.toml uv.lock ./
 
-# Remove the local path override for graphiti-core in Docker builds
-# and regenerate lock file to match the PyPI version
-RUN sed -i '/\[tool\.uv\.sources\]/,/graphiti-core/d' pyproject.toml && \
-    if [ -n "${GRAPHITI_CORE_VERSION}" ]; then \
-      sed -i "s/graphiti-core\[falkordb\]>=[0-9]\+\.[0-9]\+\.[0-9]\+$/graphiti-core[falkordb]==${GRAPHITI_CORE_VERSION}/" pyproject.toml; \
-    fi && \
-    echo "Regenerating lock file for PyPI graphiti-core..." && \
-    rm -f uv.lock && \
-    uv lock
+# Keep the local path override for graphiti-core to use the local version
+# This ensures we use the up-to-date graphiti-core from the repository
 
 # Install Python dependencies (exclude dev dependency group)
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --no-group dev
-
-# Store graphiti-core version
-RUN echo "${GRAPHITI_CORE_VERSION}" > /app/mcp/.graphiti-core-version
 
 # Copy MCP server application code
 COPY main.py ./
@@ -122,8 +112,7 @@ LABEL org.opencontainers.image.title="FalkorDB + Graphiti MCP Server" \
       org.opencontainers.image.created="${BUILD_DATE}" \
       org.opencontainers.image.revision="${VCS_REF}" \
       org.opencontainers.image.vendor="Zep AI" \
-      org.opencontainers.image.source="https://github.com/zep-ai/graphiti" \
-      graphiti.core.version="${GRAPHITI_CORE_VERSION}"
+      org.opencontainers.image.source="https://github.com/zep-ai/graphiti"
 
 # Expose ports
 EXPOSE 6379 3000 8000
