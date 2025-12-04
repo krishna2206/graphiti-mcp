@@ -80,7 +80,7 @@ class GeminiClient(LLMClient):
     """
 
     # Class-level constants
-    MAX_RETRIES: ClassVar[int] = 2
+    MAX_RETRIES: ClassVar[int] = 3  # Increased from 2 to 3 for better resilience
 
     def __init__(
         self,
@@ -194,9 +194,10 @@ class GeminiClient(LLMClient):
         """
         Attempt to salvage a JSON object if the raw output is truncated.
 
-        This is accomplished by looking for the last closing bracket for an array or object.
-        If found, it will try to load the JSON object from the raw output.
-        If the JSON object is not valid, it will return None.
+        This method tries multiple strategies to recover valid JSON from truncated output:
+        1. Check if the output already ends with valid JSON
+        2. Try to close unterminated strings and brackets
+        3. Find the last complete JSON object/array in a list
 
         Args:
             raw_output (str): The raw output from the LLM.
@@ -207,20 +208,165 @@ class GeminiClient(LLMClient):
         """
         if not raw_output:
             return None
-        # Try to salvage a JSON array
+
+        # Strategy 1: Try to salvage a complete JSON array
         array_match = re.search(r'\]\s*$', raw_output)
         if array_match:
             try:
                 return json.loads(raw_output[: array_match.end()])
             except Exception:
                 pass
-        # Try to salvage a JSON object
+
+        # Strategy 2: Try to salvage a complete JSON object
         obj_match = re.search(r'\}\s*$', raw_output)
         if obj_match:
             try:
                 return json.loads(raw_output[: obj_match.end()])
             except Exception:
                 pass
+
+        # Strategy 3: Try to fix truncated JSON by closing open structures
+        salvaged = self._try_fix_truncated_json(raw_output)
+        if salvaged is not None:
+            return salvaged
+
+        # Strategy 4: Try to extract the last complete items from an array
+        salvaged = self._extract_complete_array_items(raw_output)
+        if salvaged is not None:
+            return salvaged
+
+        return None
+
+    def _try_fix_truncated_json(self, raw_output: str) -> dict[str, typing.Any] | None:
+        """
+        Try to fix truncated JSON by closing open strings, objects, and arrays.
+
+        Args:
+            raw_output (str): The raw output that may be truncated.
+
+        Returns:
+            dict[str, typing.Any]: The fixed JSON object, or None if unfixable.
+        """
+        # Try progressively removing content from the end and closing brackets
+        for trim_chars in range(0, min(500, len(raw_output)), 10):
+            trimmed = raw_output[:-trim_chars] if trim_chars > 0 else raw_output
+
+            # Count open brackets
+            open_braces = trimmed.count('{') - trimmed.count('}')
+            open_brackets = trimmed.count('[') - trimmed.count(']')
+
+            # Check if we're inside an unterminated string
+            in_string = False
+            escaped = False
+            for char in trimmed:
+                if escaped:
+                    escaped = False
+                    continue
+                if char == '\\':
+                    escaped = True
+                    continue
+                if char == '"':
+                    in_string = not in_string
+
+            # If in a string, try to find a good place to cut
+            if in_string:
+                # Find the last complete field by looking for the pattern ": " or ","
+                last_comma = trimmed.rfind(',')
+                last_brace = trimmed.rfind('}')
+                last_bracket = trimmed.rfind(']')
+
+                cut_point = max(last_comma, last_brace, last_bracket)
+                if cut_point > 0:
+                    trimmed = trimmed[:cut_point + 1]
+                    # Recalculate open brackets
+                    open_braces = trimmed.count('{') - trimmed.count('}')
+                    open_brackets = trimmed.count('[') - trimmed.count(']')
+                    in_string = False
+                else:
+                    continue
+
+            if not in_string:
+                # Try to close the structure
+                closing = '}' * max(0, open_braces) + ']' * max(0, open_brackets)
+
+                # Also try the reverse order
+                for close_str in [closing, ']' * max(0, open_brackets) + '}' * max(0, open_braces)]:
+                    try:
+                        fixed = trimmed + close_str
+                        result = json.loads(fixed)
+                        logger.info(f'Successfully salvaged truncated JSON by closing {open_braces} braces and {open_brackets} brackets')
+                        return result
+                    except Exception:
+                        pass
+
+        return None
+
+    def _extract_complete_array_items(self, raw_output: str) -> dict[str, typing.Any] | None:
+        """
+        Try to extract complete items from an array in the JSON output.
+
+        This is useful when we have a partial list of edges/nodes and want to keep the complete ones.
+
+        Args:
+            raw_output (str): The raw output that may contain a partial array.
+
+        Returns:
+            dict[str, typing.Any]: A dict with the partial array, or None if extraction fails.
+        """
+        # Look for patterns like {"edges": [...]} or {"nodes": [...]}
+        for key in ['edges', 'nodes', 'facts', 'entities', 'items', 'results']:
+            pattern = rf'"{key}"\s*:\s*\['
+            match = re.search(pattern, raw_output)
+            if match:
+                start_idx = match.end() - 1  # Position of '['
+
+                # Find all complete objects in this array
+                complete_objects = []
+                depth = 0
+                current_start = None
+                in_string = False
+                escaped = False
+
+                for i, char in enumerate(raw_output[start_idx:], start=start_idx):
+                    if escaped:
+                        escaped = False
+                        continue
+                    if char == '\\':
+                        escaped = True
+                        continue
+                    if char == '"' and not escaped:
+                        in_string = not in_string
+                        continue
+                    if in_string:
+                        continue
+
+                    if char == '{':
+                        if depth == 1:  # We're at the array level
+                            current_start = i
+                        depth += 1
+                    elif char == '}':
+                        depth -= 1
+                        if depth == 1 and current_start is not None:
+                            # Complete object found
+                            try:
+                                obj_str = raw_output[current_start:i + 1]
+                                obj = json.loads(obj_str)
+                                complete_objects.append(obj)
+                            except Exception:
+                                pass
+                            current_start = None
+                    elif char == '[':
+                        if depth == 0:
+                            depth = 1
+                    elif char == ']':
+                        if depth == 1:
+                            break
+                        depth -= 1
+
+                if complete_objects:
+                    logger.info(f'Salvaged {len(complete_objects)} complete {key} from truncated JSON')
+                    return {key: complete_objects}
+
         return None
 
     async def _generate_response(
@@ -384,6 +530,8 @@ class GeminiClient(LLMClient):
             retry_count = 0
             last_error = None
             last_output = None
+            # Keep track of the original messages length to avoid infinite growth
+            original_messages_len = len(messages)
 
             while retry_count < self.MAX_RETRIES:
                 try:
@@ -415,19 +563,38 @@ class GeminiClient(LLMClient):
 
                     retry_count += 1
 
-                    # Construct a detailed error message for the LLM
-                    error_context = (
-                        f'The previous response attempt was invalid. '
-                        f'Error type: {e.__class__.__name__}. '
-                        f'Error details: {str(e)}. '
-                        f'Please try again with a valid response, ensuring the output matches '
-                        f'the expected format and constraints.'
-                    )
+                    # Remove any previous retry messages to avoid context pollution
+                    messages = messages[:original_messages_len]
+
+                    # Construct a more helpful error message for the LLM
+                    if 'Unterminated string' in error_text or 'truncated' in error_text.lower():
+                        # Specific guidance for JSON truncation issues
+                        error_context = (
+                            f'The previous response was truncated and resulted in invalid JSON. '
+                            f'Please provide a COMPLETE response. If the output would be very long, '
+                            f'prioritize the most important facts and ensure the JSON is properly closed. '
+                            f'Error: {str(e)[:200]}'
+                        )
+                    elif 'parse' in error_text.lower() or 'json' in error_text.lower():
+                        error_context = (
+                            f'The previous response had JSON formatting issues. '
+                            f'Please ensure valid JSON with properly escaped strings and complete structure. '
+                            f'Error: {str(e)[:200]}'
+                        )
+                    else:
+                        error_context = (
+                            f'The previous response attempt was invalid. '
+                            f'Error type: {e.__class__.__name__}. '
+                            f'Error details: {str(e)[:200]}. '
+                            f'Please try again with a valid response, ensuring the output matches '
+                            f'the expected format and constraints.'
+                        )
 
                     error_message = Message(role='user', content=error_context)
                     messages.append(error_message)
                     logger.warning(
-                        f'Retrying after application error (attempt {retry_count}/{self.MAX_RETRIES}): {e}'
+                        f'Retrying after application error (attempt {retry_count}/{self.MAX_RETRIES}): '
+                        f'{e.__class__.__name__}: {str(e)[:100]}'
                     )
 
             # If we exit the loop without returning, all retries are exhausted

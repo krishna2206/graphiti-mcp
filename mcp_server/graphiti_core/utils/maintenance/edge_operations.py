@@ -17,6 +17,7 @@ limitations under the License.
 import logging
 from datetime import datetime
 from time import time
+from typing import Iterator
 
 from pydantic import BaseModel
 from typing_extensions import LiteralString
@@ -44,6 +45,13 @@ from graphiti_core.utils.datetime_utils import ensure_utc, utc_now
 from graphiti_core.utils.maintenance.dedup_helpers import _normalize_string_exact
 
 DEFAULT_EDGE_NAME = 'RELATES_TO'
+
+# Maximum number of entities to process in a single LLM call to avoid truncated responses
+MAX_ENTITIES_PER_CHUNK = 50
+
+# Token configuration for edge extraction
+EXTRACT_EDGES_MAX_TOKENS = 16384
+EXTRACT_EDGES_MAX_TOKENS_LARGE = 32768
 
 logger = logging.getLogger(__name__)
 
@@ -86,38 +94,53 @@ def build_community_edges(
     return edges
 
 
-async def extract_edges(
-    clients: GraphitiClients,
+def chunk_nodes(nodes: list[EntityNode], chunk_size: int = MAX_ENTITIES_PER_CHUNK) -> Iterator[list[EntityNode]]:
+    """
+    Split a list of nodes into smaller chunks to avoid LLM token limits.
+
+    Args:
+        nodes: List of entity nodes to chunk
+        chunk_size: Maximum number of nodes per chunk
+
+    Yields:
+        Lists of nodes, each with at most chunk_size elements
+    """
+    for i in range(0, len(nodes), chunk_size):
+        yield nodes[i:i + chunk_size]
+
+
+async def extract_edges_for_chunk(
+    llm_client: LLMClient,
     episode: EpisodicNode,
     nodes: list[EntityNode],
     previous_episodes: list[EpisodicNode],
-    edge_type_map: dict[tuple[str, str], list[str]],
-    group_id: str = '',
-    edge_types: dict[str, type[BaseModel]] | None = None,
-) -> list[EntityEdge]:
-    start = time()
+    edge_types_context: list[dict],
+    group_id: str,
+    chunk_index: int,
+    total_chunks: int,
+) -> list[dict]:
+    """
+    Extract edges from a single chunk of entities.
 
-    extract_edges_max_tokens = 16384
-    llm_client = clients.llm_client
+    Args:
+        llm_client: The LLM client to use for extraction
+        episode: The episode node containing the content
+        nodes: List of entity nodes for this chunk
+        previous_episodes: Previous episodes for context
+        edge_types_context: Edge type definitions for the LLM
+        group_id: The group ID for this extraction
+        chunk_index: Current chunk index (for logging)
+        total_chunks: Total number of chunks (for logging)
 
-    edge_type_signature_map: dict[str, tuple[str, str]] = {
-        edge_type: signature
-        for signature, edge_types in edge_type_map.items()
-        for edge_type in edge_types
-    }
-
-    edge_types_context = (
-        [
-            {
-                'fact_type_name': type_name,
-                'fact_type_signature': edge_type_signature_map.get(type_name, ('Entity', 'Entity')),
-                'fact_type_description': type_model.__doc__,
-            }
-            for type_name, type_model in edge_types.items()
-        ]
-        if edge_types is not None
-        else []
-    )
+    Returns:
+        List of extracted edge data dictionaries
+    """
+    # Dynamically adjust max_tokens based on node count
+    # More nodes = potentially more edges = need more tokens
+    if len(nodes) > 30:
+        extract_edges_max_tokens = EXTRACT_EDGES_MAX_TOKENS_LARGE
+    else:
+        extract_edges_max_tokens = EXTRACT_EDGES_MAX_TOKENS
 
     # Prepare context for LLM
     context = {
@@ -134,37 +157,138 @@ async def extract_edges(
 
     facts_missed = True
     reflexion_iterations = 0
+    edges_data = []
+
     while facts_missed and reflexion_iterations <= MAX_REFLEXION_ITERATIONS:
-        llm_response = await llm_client.generate_response(
-            prompt_library.extract_edges.edge(context),
-            response_model=ExtractedEdges,
-            max_tokens=extract_edges_max_tokens,
-            group_id=group_id,
-            prompt_name='extract_edges.edge',
-        )
-        edges_data = ExtractedEdges(**llm_response).edges
+        try:
+            llm_response = await llm_client.generate_response(
+                prompt_library.extract_edges.edge(context),
+                response_model=ExtractedEdges,
+                max_tokens=extract_edges_max_tokens,
+                group_id=group_id,
+                prompt_name='extract_edges.edge',
+            )
+            edges_data = ExtractedEdges(**llm_response).edges
+        except Exception as e:
+            # Log the error but continue with what we have
+            logger.warning(
+                f'Error extracting edges for chunk {chunk_index + 1}/{total_chunks}: {e}. '
+                f'Continuing with partial results.'
+            )
+            # If we got a partial result from salvage, try to use it
+            if hasattr(e, '__cause__') and hasattr(e.__cause__, 'args'):
+                logger.debug(f'Underlying cause: {e.__cause__}')
+            break
 
         context['extracted_facts'] = [edge_data.fact for edge_data in edges_data]
 
         reflexion_iterations += 1
         if reflexion_iterations < MAX_REFLEXION_ITERATIONS:
-            reflexion_response = await llm_client.generate_response(
-                prompt_library.extract_edges.reflexion(context),
-                response_model=MissingFacts,
-                max_tokens=extract_edges_max_tokens,
+            try:
+                reflexion_response = await llm_client.generate_response(
+                    prompt_library.extract_edges.reflexion(context),
+                    response_model=MissingFacts,
+                    max_tokens=extract_edges_max_tokens,
+                    group_id=group_id,
+                    prompt_name='extract_edges.reflexion',
+                )
+
+                missing_facts = reflexion_response.get('missing_facts', [])
+
+                custom_prompt = 'The following facts were missed in a previous extraction: '
+                for fact in missing_facts:
+                    custom_prompt += f'\n{fact},'
+
+                context['custom_prompt'] = custom_prompt
+
+                facts_missed = len(missing_facts) != 0
+            except Exception as e:
+                logger.warning(f'Reflexion failed for chunk {chunk_index + 1}/{total_chunks}: {e}')
+                facts_missed = False  # Exit the loop on reflexion failure
+
+    return edges_data
+
+
+async def extract_edges(
+    clients: GraphitiClients,
+    episode: EpisodicNode,
+    nodes: list[EntityNode],
+    previous_episodes: list[EpisodicNode],
+    edge_type_map: dict[tuple[str, str], list[str]],
+    group_id: str = '',
+    edge_types: dict[str, type[BaseModel]] | None = None,
+) -> list[EntityEdge]:
+    start = time()
+
+    llm_client = clients.llm_client
+
+    edge_type_signature_map: dict[str, tuple[str, str]] = {
+        edge_type: signature
+        for signature, edge_types_list in edge_type_map.items()
+        for edge_type in edge_types_list
+    }
+
+    edge_types_context = (
+        [
+            {
+                'fact_type_name': type_name,
+                'fact_type_signature': edge_type_signature_map.get(type_name, ('Entity', 'Entity')),
+                'fact_type_description': type_model.__doc__,
+            }
+            for type_name, type_model in edge_types.items()
+        ]
+        if edge_types is not None
+        else []
+    )
+
+    # Check if we need to chunk the nodes
+    all_edges_data = []
+    if len(nodes) > MAX_ENTITIES_PER_CHUNK:
+        logger.info(
+            f'Large entity set detected ({len(nodes)} entities). '
+            f'Processing in chunks of {MAX_ENTITIES_PER_CHUNK} to avoid truncation.'
+        )
+
+        node_chunks = list(chunk_nodes(nodes, MAX_ENTITIES_PER_CHUNK))
+        total_chunks = len(node_chunks)
+
+        for chunk_index, node_chunk in enumerate(node_chunks):
+            logger.debug(f'Processing chunk {chunk_index + 1}/{total_chunks} with {len(node_chunk)} entities')
+
+            chunk_edges = await extract_edges_for_chunk(
+                llm_client=llm_client,
+                episode=episode,
+                nodes=node_chunk,
+                previous_episodes=previous_episodes,
+                edge_types_context=edge_types_context,
                 group_id=group_id,
-                prompt_name='extract_edges.reflexion',
+                chunk_index=chunk_index,
+                total_chunks=total_chunks,
             )
 
-            missing_facts = reflexion_response.get('missing_facts', [])
+            # Adjust entity IDs to account for chunking offset
+            offset = chunk_index * MAX_ENTITIES_PER_CHUNK
+            for edge_data in chunk_edges:
+                edge_data.source_entity_id += offset
+                edge_data.target_entity_id += offset
 
-            custom_prompt = 'The following facts were missed in a previous extraction: '
-            for fact in missing_facts:
-                custom_prompt += f'\n{fact},'
+            all_edges_data.extend(chunk_edges)
 
-            context['custom_prompt'] = custom_prompt
+        logger.info(f'Extracted {len(all_edges_data)} edges from {total_chunks} chunks')
+    else:
+        # Process normally for small entity sets
+        all_edges_data = await extract_edges_for_chunk(
+            llm_client=llm_client,
+            episode=episode,
+            nodes=nodes,
+            previous_episodes=previous_episodes,
+            edge_types_context=edge_types_context,
+            group_id=group_id,
+            chunk_index=0,
+            total_chunks=1,
+        )
 
-            facts_missed = len(missing_facts) != 0
+    edges_data = all_edges_data
 
     end = time()
     logger.debug(f'Extracted new edges: {edges_data} in {(end - start) * 1000} ms')
